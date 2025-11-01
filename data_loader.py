@@ -36,8 +36,10 @@ def get_datasets_transform(dataset, data_dir="/kaggle/input/facescrub-edgeface-3
     print(f"Train path: {train_path}, Test path: {test_path}")
 
     # Load datasets with dummy transform first
-    trainset = datasets.ImageFolder(root=train_path, transform=transforms.ToTensor())
-    testset = datasets.ImageFolder(root=test_path, transform=transforms.ToTensor())
+    # trainset = datasets.ImageFolder(root=train_path, transform=transforms.ToTensor())
+    # testset = datasets.ImageFolder(root=test_path, transform=transforms.ToTensor())
+    trainset = datasets.ImageFolder(root=train_path)  # Không transform
+    testset = datasets.ImageFolder(root=test_path)    # Không transform
 
     # Detect size from data_dir
     is_32x32 = '32x32' in data_dir.lower() or '32' in data_dir.lower()

@@ -1,15 +1,7 @@
 import torch
 import torchvision.transforms as transforms
 from torchvision import datasets
-import torchvision.io
 import os
-import cv2
-import dlib
-import numpy as np
-import torch.nn as nn
-import torchvision.transforms.functional as TF
-
-detector = dlib.get_frontal_face_detector()
 
 def get_datasets_transform(dataset, data_dir="/kaggle/input/facescrub-edgeface-32x32", cross_eval=False, backbone='resnet'):
     # Auto detect Kaggle
@@ -35,31 +27,20 @@ def get_datasets_transform(dataset, data_dir="/kaggle/input/facescrub-edgeface-3
 
     print(f"Train path: {train_path}, Test path: {test_path}")
 
-    # Load datasets with dummy transform first
-    # trainset = datasets.ImageFolder(root=train_path, transform=transforms.ToTensor())
-    # testset = datasets.ImageFolder(root=test_path, transform=transforms.ToTensor())
-    trainset = datasets.ImageFolder(root=train_path)  # Không transform
-    testset = datasets.ImageFolder(root=test_path)    # Không transform
+    # LOAD DATASET KHÔNG CÓ TRANSFORM → TRẢ VỀ PIL Image
+    trainset = datasets.ImageFolder(root=train_path)
+    testset = datasets.ImageFolder(root=test_path)
 
-    # Detect size from data_dir
+    # Detect 32x32
     is_32x32 = '32x32' in data_dir.lower() or '32' in data_dir.lower()
 
-    # Align transform (skip for pre-aligned data)
-    align_transform = nn.Identity()
-
-    # Normalize & size
+    # Normalize
     if backbone == 'edgeface':
-        if is_32x32:
-            norm_mean = (0.5, 0.5, 0.5)
-            norm_std  = (0.5, 0.5, 0.5)
-            resize_size = 35
-            crop_size = 32
-        else:
-            norm_mean = (0.5, 0.5, 0.5)
-            norm_std  = (0.5, 0.5, 0.5)
-            resize_size = 120
-            crop_size = 112
-    else:  # resnet
+        norm_mean = (0.5, 0.5, 0.5)
+        norm_std  = (0.5, 0.5, 0.5)
+        resize_size = 35 if is_32x32 else 120
+        crop_size = 32 if is_32x32 else 112
+    else:
         if dataset == "vggface2" or cross_eval:
             norm_mean = (0.5, 0.5, 0.5)
             norm_std  = (0.5, 0.5, 0.5)
@@ -71,40 +52,35 @@ def get_datasets_transform(dataset, data_dir="/kaggle/input/facescrub-edgeface-3
             resize_size = 35
             crop_size = 32
 
-    # FINAL TRANSFORMS
+    # TRANSFORMS: CÓ ToTensor() → CHUYỂN PIL → TENSOR
     if cross_eval:
         transform_train = transforms.Compose([
-            align_transform,
             transforms.Resize(resize_size),
             transforms.CenterCrop(crop_size),
-            transforms.ToTensor(),
+            transforms.ToTensor(),  # PHẢI CÓ
             transforms.Normalize(norm_mean, norm_std),
         ])
         transform_test = transform_train
     else:
         transform_train = transforms.Compose([
-            align_transform,
             transforms.Resize(resize_size),
             transforms.RandomCrop(crop_size),
             transforms.RandomHorizontalFlip(p=0.5),
-            transforms.ToTensor(),
+            transforms.ToTensor(),  # PHẢI CÓ
             transforms.Normalize(norm_mean, norm_std),
         ])
         transform_test = transforms.Compose([
-            align_transform,
             transforms.Resize(resize_size),
             transforms.CenterCrop(crop_size),
-            transforms.ToTensor(),
+            transforms.ToTensor(),  # PHẢI CÓ
             transforms.Normalize(norm_mean, norm_std),
         ])
 
-    # Apply transforms to datasets
+    # ÁP DỤNG TRANSFORM
     trainset.transform = transform_train
     testset.transform = transform_test
 
     return {"dataset": [trainset, testset], "transform": [transform_train, transform_test]}
-
-
 
 
 

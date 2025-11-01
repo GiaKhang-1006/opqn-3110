@@ -61,6 +61,14 @@ def train(save_path, length, num, words, feature_dim):
     print("number of test images: ", len(testset))
     print("number of training batches per epoch:", len(train_loader))
     print("number of testing batches per epoch:", len(test_loader))
+    
+    # KIỂM TRA OVERLAP IDENTITY (SEEN RETRIEVAL)
+    train_ids = set(trainset.targets)
+    test_ids = set(testset.targets)
+    overlap = train_ids.intersection(test_ids)
+    print(f"Overlap identities (seen): {len(overlap)} / {len(test_ids)}")
+    assert len(overlap) == len(test_ids), "LỖI: Test identities KHÔNG có trong train! (Phải là seen retrieval)"
+    # -----------------------------------
 
     d = int(feature_dim / num)
     matrix = torch.randn(d, d)

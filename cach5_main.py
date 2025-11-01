@@ -360,25 +360,28 @@ if __name__ == "__main__":
                     feature_dim = num_s * words_s
             test(args.load[i], args.len[i], num_s, words_s, feature_dim=feature_dim)
     else:
-        if len(args.save) != len(args.num) or len(args.save) != len(args.len) or len(args.save) != len(args.words):
-            print("Warning: Args lengths don't match. Adjusting to shortest length.")
-            min_len = min(len(args.save), len(args.num), len(args.len), len(args.words))
-            args.save = args.save[:min_len]
-            args.num = args.num[:min_len]
-            args.len = args.len[:min_len]
-            args.words = args.words[:min_len]
-        for i, (num_s, words_s) in enumerate(zip(args.num, args.words)):
-            sys.stdout = Logger(os.path.join(save_dir,
-                str(args.len[i]) + 'bits' + '_' + args.dataset + '_' + datetime.now().strftime('%m%d%H%M') + '.txt'))
-            print("[Configuration] Training on dataset: %s\n  Len_bits: %d\n Batch_size: %d\n learning rate: %.3f\n num_books: %d\n num_words: %d"
-                  % (args.dataset, args.len[i], args.bs, args.lr, num_s, words_s))
-            print("HyperParams:\nmargin: %.3f\t miu: %.4f" % (args.margin, args.miu))
-            if args.dataset != "vggface2":
-                if args.len[i] != 36:
-                    feature_dim = 512
+        if args.pretrain_cosface:
+            pass  # Không cần num, words, len → bỏ kiểm tra
+        else:
+            if len(args.save) != len(args.num) or len(args.save) != len(args.len) or len(args.save) != len(args.words):
+                print("Warning: Args lengths don't match. Adjusting to shortest length.")
+                min_len = min(len(args.save), len(args.num), len(args.len), len(args.words))
+                args.save = args.save[:min_len]
+                args.num = args.num[:min_len]
+                args.len = args.len[:min_len]
+                args.words = args.words[:min_len]
+            for i, (num_s, words_s) in enumerate(zip(args.num, args.words)):
+                sys.stdout = Logger(os.path.join(save_dir,
+                    str(args.len[i]) + 'bits' + '_' + args.dataset + '_' + datetime.now().strftime('%m%d%H%M') + '.txt'))
+                print("[Configuration] Training on dataset: %s\n  Len_bits: %d\n Batch_size: %d\n learning rate: %.3f\n num_books: %d\n num_words: %d"
+                    % (args.dataset, args.len[i], args.bs, args.lr, num_s, words_s))
+                print("HyperParams:\nmargin: %.3f\t miu: %.4f" % (args.margin, args.miu))
+                if args.dataset != "vggface2":
+                    if args.len[i] != 36:
+                        feature_dim = 512
+                    else:
+                        feature_dim = 516
+                    train(args.save[i], args.len[i], num_s, words_s, feature_dim=feature_dim)
                 else:
-                    feature_dim = 516
-                train(args.save[i], args.len[i], num_s, words_s, feature_dim=feature_dim)
-            else:
-                feature_dim = num_s * words_s
-                train(args.save[i], args.len[i], num_s, words_s, feature_dim=feature_dim)
+                    feature_dim = num_s * words_s
+                    train(args.save[i], args.len[i], num_s, words_s, feature_dim=feature_dim)

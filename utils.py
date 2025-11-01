@@ -191,7 +191,7 @@ def compute_result(transform, dataloader, net, device):
     label = []
     for i, (imgs, cls, *_) in enumerate(dataloader):
         imgs = imgs.to(device)
-        #imgs = transform(imgs)
+        imgs = transform(imgs)
         hash_values = net(imgs)
         bs.append(hash_values.data)
         label.append(cls.to(device))
@@ -204,7 +204,7 @@ def compute_result_real(transform, dataloader, net, device):
     label = []
     for i, (imgs, cls, *_) in enumerate(dataloader):
         imgs = imgs.to(device)
-        #imgs = transform(imgs)
+        imgs = transform(imgs)
         hash_values = net(imgs)
         bs.append(hash_values.data)
         label.append(cls.to(device))
@@ -218,7 +218,7 @@ def compute_result_hflip(transform, dataloader, net, device):
     label = []
     for i, (imgs, cls, *_) in enumerate(dataloader):
         imgs = imgs.to(device)
-        #imgs = transform(imgs)
+        imgs = transform(imgs)
 
         imgs_flip = TF.hflip(imgs)
         imgs_flip = transform(imgs_flip)
@@ -489,7 +489,7 @@ def compute_quant(transform, dataloader, net, device):
     with torch.no_grad():
         for i, (imgs, cls, *_) in enumerate(dataloader):
             imgs = imgs.to(device)
-            #imgs = transform(imgs)
+            imgs = transform(imgs)
             hash_values = net(imgs)
             bs.append(hash_values.data)
             label.append(cls.to(device))
@@ -517,7 +517,7 @@ def compute_quant_indexing(transform, dataloader, net, len_word, mlp_weight, dev
     indices = []
     for i, (imgs, cls, *_) in enumerate(dataloader):
         imgs = imgs.to(device)
-        #imgs = transform(imgs)
+        imgs = transform(imgs)
         features = net(imgs)
         features_split = torch.stack(torch.split(features, len_word, dim=1), dim=0)
         if norm:

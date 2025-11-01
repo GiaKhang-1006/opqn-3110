@@ -162,8 +162,9 @@ def train(save_path, length, num, words, feature_dim):
         start = time.time()
         for batch_idx, (inputs, targets) in enumerate(train_loader):
             inputs, targets = inputs.cuda(), targets.cuda()
-            transformed_images = transform_train(inputs)
-            features = net(transformed_images)
+            #transformed_images = transform_train(inputs)
+            #features = net(transformed_images)
+            features = net(inputs)
             output1, output2, xc_probs = metric(features, targets)
             loss_clf1 = [criterion(output1[:, i, :], targets) for i in range(num_books)]
             loss_clf2 = [criterion(output2[:, i, :], targets) for i in range(num_books)]

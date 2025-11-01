@@ -191,7 +191,7 @@ def compute_result(transform, dataloader, net, device):
     label = []
     for i, (imgs, cls, *_) in enumerate(dataloader):
         imgs = imgs.to(device)
-        imgs = transform(imgs)
+        #imgs = transform(imgs)
         hash_values = net(imgs)
         bs.append(hash_values.data)
         label.append(cls.to(device))
@@ -204,7 +204,7 @@ def compute_result_real(transform, dataloader, net, device):
     label = []
     for i, (imgs, cls, *_) in enumerate(dataloader):
         imgs = imgs.to(device)
-        imgs = transform(imgs)
+        #imgs = transform(imgs)
         hash_values = net(imgs)
         bs.append(hash_values.data)
         label.append(cls.to(device))
@@ -218,7 +218,7 @@ def compute_result_hflip(transform, dataloader, net, device):
     label = []
     for i, (imgs, cls, *_) in enumerate(dataloader):
         imgs = imgs.to(device)
-        imgs = transform(imgs)
+        #imgs = transform(imgs)
 
         imgs_flip = TF.hflip(imgs)
         imgs_flip = transform(imgs_flip)
@@ -489,7 +489,7 @@ def compute_quant(transform, dataloader, net, device):
     with torch.no_grad():
         for i, (imgs, cls, *_) in enumerate(dataloader):
             imgs = imgs.to(device)
-            imgs = transform(imgs)
+            #imgs = transform(imgs)
             hash_values = net(imgs)
             bs.append(hash_values.data)
             label.append(cls.to(device))
@@ -517,7 +517,7 @@ def compute_quant_indexing(transform, dataloader, net, len_word, mlp_weight, dev
     indices = []
     for i, (imgs, cls, *_) in enumerate(dataloader):
         imgs = imgs.to(device)
-        imgs = transform(imgs)
+        #imgs = transform(imgs)
         features = net(imgs)
         features_split = torch.stack(torch.split(features, len_word, dim=1), dim=0)
         if norm:
@@ -929,6 +929,68 @@ def compute_topk(trainset, test_features, test_labels, train_labels, index_table
     return results, dict0, dict1
 
 
+def PqDistRet_Ortho_safe(test_features, test_labels, train_labels, index_table, mlp, len_word, num_book, device, top=None, bit_length=None):
+    """
+    Copy of PqDistRet_Ortho with added saving of distances, ranks, features for visualization.
+    """
+    num_test = test_features.size(0)
+    AP = []
+    top_p = []
+
+    ####################### first intra-normalize the features
+    features_split = torch.split(test_features, len_word, dim=1)
+    features_split = torch.stack(features_split, dim=0)  # num_books, bs, len_words
+    norm_features = F.normalize(features_split, dim=2)
+    distances = torch.zeros(num_test, train_labels.size(0)).to(device)  # Matrix of distances
+    ranks = torch.zeros(num_test, train_labels.size(0)).to(device)     # Matrix of ranks
+
+    for j in range(num_test):
+        softmax_score = F.softmax(torch.matmul(norm_features[:, j, :].unsqueeze(1), mlp).squeeze(1), dim=1)
+
+        # Compute distances per book
+        pdist_perbook = [F.embedding(index_table[k, :].view(-1, 1), softmax_score[k].view(-1, 1)).squeeze(dim=2)
+                        for k in range(num_book)]  # List of #num_books (N, 1) tensor
+        pdist_full = torch.cat(pdist_perbook, dim=1)  # Shape of (N, #books)
+        distQ = torch.sum(pdist_full, dim=1)  # Aggregate distance for each train sample
+
+        # Store distances
+        distances[j, :] = distQ
+
+        # Sort and get ranks
+        _, sort_result = torch.sort(distQ, descending=True)
+        ranks[j, :] = sort_result.float()  # Store sorted indices as ranks
+
+        correct = (test_labels[j] == train_labels[sort_result]).float()
+        N = torch.sum(correct)
+        if device == "cuda:0":
+            Ns = torch.arange(1, N+1).float().to(device)
+        else:
+            Ns = torch.arange(1, N+1).float()
+        index = (torch.nonzero(correct, as_tuple=False) + 1)[:, 0].float()
+        AP.append(torch.mean(Ns / index))
+        if top is not None:
+            top_result = sort_result[:top]
+            top_correct = (test_labels[j] == train_labels[top_result]).float()
+            N_top = torch.sum(top_correct)
+            top_p.append(1.0 * N_top / top)
+
+    top_mAP = torch.mean(torch.Tensor(top_p).cuda())
+    mAP = torch.mean(torch.Tensor(AP).cuda())
+
+    # Save to files if bit_length is provided
+    if bit_length is not None:
+        np.save(f'distances_{bit_length}.npy', distances.cpu().numpy())
+        np.save(f'ranks_{bit_length}.npy', ranks.cpu().numpy())
+        np.save(f'features_{bit_length}.npy', test_features.cpu().numpy())
+        np.save(f'labels_{bit_length}.npy', test_labels.cpu().numpy())
+        np.save(f'train_labels_{bit_length}.npy', train_labels.cpu().numpy())
+        np.save(f'index_table_{bit_length}.npy', index_table.cpu().numpy())  # Sửa lại để lưu index_table đúng
+        np.save(f'mlp_{bit_length}.npy', mlp.cpu().numpy())  # Đúng
+
+    print('[Evaluate Phase] MAP: %.2f%% top_k: %.2f%%' % (100. * float(mAP), 100. * float(top_mAP)))
+
+    return mAP, top_mAP, distances, ranks, test_features
+
 
 
 # def PqDistRet_Ortho_safe(test_features, test_labels, train_labels, index_table, mlp, len_word, num_book, device, top=None, bit_length=None):
@@ -993,66 +1055,3 @@ def compute_topk(trainset, test_features, test_labels, train_labels, index_table
 #     print('[Evaluate Phase] MAP: %.2f%% top_k: %.2f%%' % (100. * float(mAP), 100. * float(top_mAP)))
 
 #     return mAP, top_mAP, distances, ranks, test_features
-
-
-def PqDistRet_Ortho_safe(test_features, test_labels, train_labels, index_table, mlp, len_word, num_book, device, top=None, bit_length=None):
-    """
-    Copy of PqDistRet_Ortho with added saving of distances, ranks, features for visualization.
-    """
-    num_test = test_features.size(0)
-    AP = []
-    top_p = []
-
-    ####################### first intra-normalize the features
-    features_split = torch.split(test_features, len_word, dim=1)
-    features_split = torch.stack(features_split, dim=0)  # num_books, bs, len_words
-    norm_features = F.normalize(features_split, dim=2)
-    distances = torch.zeros(num_test, train_labels.size(0)).to(device)  # Matrix of distances
-    ranks = torch.zeros(num_test, train_labels.size(0)).to(device)     # Matrix of ranks
-
-    for j in range(num_test):
-        softmax_score = F.softmax(torch.matmul(norm_features[:, j, :].unsqueeze(1), mlp).squeeze(1), dim=1)
-
-        # Compute distances per book
-        pdist_perbook = [F.embedding(index_table[k, :].view(-1, 1), softmax_score[k].view(-1, 1)).squeeze(dim=2)
-                        for k in range(num_book)]  # List of #num_books (N, 1) tensor
-        pdist_full = torch.cat(pdist_perbook, dim=1)  # Shape of (N, #books)
-        distQ = torch.sum(pdist_full, dim=1)  # Aggregate distance for each train sample
-
-        # Store distances
-        distances[j, :] = distQ
-
-        # Sort and get ranks
-        _, sort_result = torch.sort(distQ, descending=True)
-        ranks[j, :] = sort_result.float()  # Store sorted indices as ranks
-
-        correct = (test_labels[j] == train_labels[sort_result]).float()
-        N = torch.sum(correct)
-        if device == "cuda:0":
-            Ns = torch.arange(1, N+1).float().to(device)
-        else:
-            Ns = torch.arange(1, N+1).float()
-        index = (torch.nonzero(correct, as_tuple=False) + 1)[:, 0].float()
-        AP.append(torch.mean(Ns / index))
-        if top is not None:
-            top_result = sort_result[:top]
-            top_correct = (test_labels[j] == train_labels[top_result]).float()
-            N_top = torch.sum(top_correct)
-            top_p.append(1.0 * N_top / top)
-
-    top_mAP = torch.mean(torch.Tensor(top_p).cuda())
-    mAP = torch.mean(torch.Tensor(AP).cuda())
-
-    # Save to files if bit_length is provided
-    if bit_length is not None:
-        np.save(f'distances_{bit_length}.npy', distances.cpu().numpy())
-        np.save(f'ranks_{bit_length}.npy', ranks.cpu().numpy())
-        np.save(f'features_{bit_length}.npy', test_features.cpu().numpy())
-        np.save(f'labels_{bit_length}.npy', test_labels.cpu().numpy())
-        np.save(f'train_labels_{bit_length}.npy', train_labels.cpu().numpy())
-        np.save(f'index_table_{bit_length}.npy', index_table.cpu().numpy())  # Sửa lại để lưu index_table đúng
-        np.save(f'mlp_{bit_length}.npy', mlp.cpu().numpy())  # Đúng
-
-    print('[Evaluate Phase] MAP: %.2f%% top_k: %.2f%%' % (100. * float(mAP), 100. * float(top_mAP)))
-
-    return mAP, top_mAP, distances, ranks, test_features

@@ -73,6 +73,7 @@ def train(save_path, length, num, words, feature_dim):
     code_books[0] = matrix[:, :words]
     for i in range(1, num):
         code_books[i] = matrix @ code_books[i-1]
+    # Normalize codebook
     code_books /= torch.norm(code_books, dim=1, keepdim=True)
     print("Codebook norms:", [torch.norm(code_books[i], dim=1).mean().item() for i in range(num)])
 
@@ -116,7 +117,7 @@ def train(save_path, length, num, words, feature_dim):
 
     if args.scheduler_type == 'step':
         class adjust_lr:
-            def __init__(self, step=35, decay=0.5):
+            def __init__(self, step, decay=0.5):
                 self.step = step
                 self.decay = decay
             def adjust(self, optimizer, epoch):
@@ -124,7 +125,10 @@ def train(save_path, length, num, words, feature_dim):
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = lr
                 return lr
-        scheduler = adjust_lr()
+        if args.dataset in ["facescrub", "cfw", "youtube"]:
+            scheduler = adjust_lr(step=35)
+        else:
+            scheduler = adjust_lr(step=20)
     else:
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
 
@@ -181,7 +185,7 @@ def train(save_path, length, num, words, feature_dim):
                 best_loss = losses.avg
                 best_mAP = mAP
                 print('Saving..')
-                checkpoint_dir = '/kaggle/working/opqn-3110/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
+                checkpoint_dir = '/kaggle/working/opqn-0210/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
                 os.makedirs(checkpoint_dir, exist_ok=True)
                 torch.save({'backbone': net.state_dict(), 'mlp': metric.module.mlp}, os.path.join(checkpoint_dir, save_path))
                 best_epoch = epoch + 1
@@ -189,37 +193,93 @@ def train(save_path, length, num, words, feature_dim):
     print("Training Completed in {:.0f}min {:.0f}s".format(time_elapsed // 60, time_elapsed % 60))
     print("Best mAP {:.4f} at epoch {}".format(best_mAP, best_epoch))
     print("Model saved as %s" % save_path)
-    
+
+def test(load_path, length, num, words, feature_dim):
+    print("===============evaluation on model %s===============" % load_path)
+    num_classes = len(trainset.classes)
+    num_classes_test = len(testset.classes)
+    print("number of train identities: ", num_classes)
+    print("number of test identities: ", num_classes_test)
+    print("number of training images: ", len(trainset))
+    print("number of test images: ", len(testset))
+    print("number of training batches per epoch:", len(train_loader))
+    print("number of testing batches per epoch:", len(test_loader))
+
+    # Conditional khởi tạo net dựa trên backbone (giống train())
+    if args.cross_dataset or args.dataset == "vggface2":
+        if args.backbone == 'edgeface':
+            net = EdgeFaceBackbone(feature_dim=feature_dim)
+        else:
+            net = resnet20_pq(num_layers=20, feature_dim=feature_dim)
+    else:
+        if args.backbone == 'edgeface':
+            net = EdgeFaceBackbone(feature_dim=feature_dim)
+        else:
+            net = resnet20_pq(num_layers=20, feature_dim=feature_dim, channel_max=512, size=4)
+
+    net = nn.DataParallel(net).to(device)
+
+    # Sửa path checkpoint cho Kaggle
+    checkpoint_dir = '/kaggle/working/opqn-0210/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
+    checkpoint = torch.load(os.path.join(checkpoint_dir, load_path))
+    net.load_state_dict(checkpoint['backbone'])
+    mlp_weight = checkpoint['mlp']
+    len_word = int(feature_dim / num)
+    net.eval()
+    with torch.no_grad():
+        index, train_labels = compute_quant_indexing(transform_test, train_loader, net, len_word, mlp_weight, device)
+        start = datetime.now()
+        query_features, test_labels = compute_quant(transform_test, test_loader, net, device)
+        if args.dataset != "vggface2":
+            mAP, top_k = PqDistRet_Ortho(query_features, test_labels, train_labels, index, mlp_weight, len_word, num, device, top=5)
+        else:
+            mAP, top_k = PqDistRet_Ortho(query_features, test_labels, train_labels, index, mlp_weight, len_word, num, device, top=10)
+
+        time_elapsed = datetime.now() - start
+        print("Query completed in %d ms" % int(time_elapsed.total_seconds() * 1000))
+        print('[Evaluate Phase] MAP: %.2f%% top_k: %.2f%%' % (100. * float(mAP), 100. * float(top_k)))
+
 if __name__ == "__main__":
     save_dir = 'log'
     if args.evaluate:
-        assert len(args.load) == len(args.num), 'model paths must be in line with # code lengths'
+        if len(args.load) != len(args.num) or len(args.load) != len(args.len) or len(args.load) != len(args.words):
+            print("Warning: Args lengths don't match. Adjusting to shortest length.")
+            min_len = min(len(args.load), len(args.num), len(args.len), len(args.words))
+            args.load = args.load[:min_len]
+            args.num = args.num[:min_len]
+            args.len = args.len[:min_len]
+            args.words = args.words[:min_len]
         for i, (num_s, words_s) in enumerate(zip(args.num, args.words)):
             if args.cross_dataset:
                 feature_dim = num_s * words_s
             else:
-                if args.dataset!="vggface2":
+                if args.dataset != "vggface2":
                     if args.len[i] != 36:
                         feature_dim = 512
                     else:
                         feature_dim = 516
                 else:
-                    feature_dim=num_s * words_s
-            # Gọi test nếu có
+                    feature_dim = num_s * words_s
+            test(args.load[i], args.len[i], num_s, words_s, feature_dim=feature_dim)
     else:
-        assert len(args.save) == len(args.num) and len(args.save) == len(args.words), 'model paths must be in line with # code lengths'
+        if len(args.save) != len(args.num) or len(args.save) != len(args.len) or len(args.save) != len(args.words):
+            print("Warning: Args lengths don't match. Adjusting to shortest length.")
+            min_len = min(len(args.save), len(args.num), len(args.len), len(args.words))
+            args.save = args.save[:min_len]
+            args.num = args.num[:min_len]
+            args.len = args.len[:min_len]
+            args.words = args.words[:min_len]
         for i, (num_s, words_s) in enumerate(zip(args.num, args.words)):
             sys.stdout = Logger(os.path.join(save_dir,
                 str(args.len[i]) + 'bits' + '_' + args.dataset + '_' + datetime.now().strftime('%m%d%H%M') + '.txt'))
-            print("[Configuration] Training on dataset: %s\n  Len_bits: %d\n Batch_size: %d\n learning rate: %.3f\n num_books: %d\n num_words: %d"
-            %(args.dataset, args.len[i], args.bs, args.lr, num_s, words_s))
+            print("[Configuration] Training on dataset: %s\n  Len_bits: %d\n Batch_size: %d\n learning rate: %.3f\n num_books: %d\n num_words: %d" %
+                  (args.dataset, args.len[i], args.bs, args.lr, num_s, words_s))
             print("HyperParams:\nmargin: %.3f\t miu: %.4f" % (args.margin, args.miu))
-            if args.dataset!="vggface2":
+            if args.dataset != "vggface2":
                 if args.len[i] != 36:
                     feature_dim = 512
                 else:
                     feature_dim = 516
             else:
-                feature_dim=num_s * words_s
-          
+                feature_dim = num_s * words_s
             train(args.save[i], args.len[i], num_s, words_s, feature_dim=feature_dim)

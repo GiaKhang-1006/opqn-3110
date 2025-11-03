@@ -191,7 +191,7 @@ def train(save_path, length, num, words, feature_dim):
                 best_loss = losses.avg
                 best_mAP = mAP
                 print('Saving..')
-                checkpoint_dir = '/kaggle/working/opqn-0210/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
+                checkpoint_dir = '/kaggle/working/opqn-3110/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
                 os.makedirs(checkpoint_dir, exist_ok=True)
                 torch.save({'backbone': net.state_dict(), 'mlp': metric.module.mlp}, os.path.join(checkpoint_dir, save_path))
                 best_epoch = epoch + 1
@@ -238,7 +238,7 @@ def test(load_path, length, num, words, feature_dim=512):
     if os.path.isabs(load_path):
         checkpoint_path = load_path
     else:
-        checkpoint_dir = '/kaggle/working/opqn-0210/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
+        checkpoint_dir = '/kaggle/working/opqn-3110/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
         checkpoint_path = os.path.join(checkpoint_dir, load_path)
 
     # Kiểm tra xem file có tồn tại không trước khi load

@@ -51,6 +51,17 @@ test_loader = torch.utils.data.DataLoader(testset, batch_size=args.bs, shuffle=F
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 torch.cuda.manual_seed_all(1)
 
+class adjust_lr:
+    def __init__(self, step, decay):
+        self.step = step
+        self.decay = decay
+
+    def adjust(self, optimizer, epoch):
+        lr = args.lr * (self.decay ** (epoch // self.step))
+        for i, param_group in enumerate(optimizer.param_groups):
+            param_group['lr'] = lr
+        return lr
+
 def train(save_path, length, num, words, feature_dim):
     best_acc = 0
     best_mAP = 0
@@ -82,13 +93,13 @@ def train(save_path, length, num, words, feature_dim):
             net = EdgeFaceBackbone(feature_dim=feature_dim)
         else:
             net = resnet20_pq(num_layers=20, feature_dim=feature_dim)
-        metric = OrthoPQ(in_features=feature_dim, out_features=num_classes, num_books=num, num_words=words, code_books=code_books, sc=args.sc, m=args.margin)
+        metric = OrthoPQ(in_features=feature_dim, out_features=num_classes, num_books=num, code_books=code_books, num_words=words, sc=args.sc, m=args.margin)
     else:
         if args.backbone == 'edgeface':
             net = EdgeFaceBackbone(feature_dim=feature_dim)
         else:
             net = resnet20_pq(num_layers=20, feature_dim=feature_dim, channel_max=512, size=4)
-        metric = OrthoPQ(in_features=feature_dim, out_features=num_classes, num_books=num, num_words=words, code_books=code_books, sc=args.sc, m=args.margin)
+        metric = OrthoPQ(in_features=feature_dim, out_features=num_classes, num_books=num, code_books=code_books, num_words=words, sc=args.sc, m=args.margin)
 
     net = nn.DataParallel(net).to(device)
     if args.backbone == 'edgeface' and args.freeze:
@@ -110,29 +121,26 @@ def train(save_path, length, num, words, feature_dim):
     print("code length: %d-bit \t learning rate: %.3f \t scale length: %d \t penalty margin: %.2f \t balance_weight: %.3f" % 
           (len_bit, args.lr, metric.module.s, metric.module.m, args.miu))
 
-    optimizer_params = [{'params': metric.parameters(), 'lr': args.lr}]
-    if any(p.requires_grad for p in net.parameters()):
-        optimizer_params.append({'params': [p for p in net.parameters() if p.requires_grad], 'lr': args.lr})
-    optimizer = optim.SGD(optimizer_params, weight_decay=args.wd, momentum=0.9)
-
-    if args.scheduler_type == 'step':
-        class adjust_lr:
-            def __init__(self, step=35, decay=0.5):
-                self.step = step
-                self.decay = decay
-            def adjust(self, optimizer, epoch):
-                lr = args.lr * (self.decay ** (epoch // self.step))
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
-                return lr
-        scheduler = adjust_lr()
-    else:
-        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
-
     if args.dataset in ["facescrub", "cfw", "youtube"]:
+        optimizer_params = [{'params': metric.parameters(), 'lr': args.lr}]
+        if any(p.requires_grad for p in net.parameters()):
+            optimizer_params.append({'params': [p for p in net.parameters() if p.requires_grad], 'lr': args.lr})
+        optimizer = optim.SGD(optimizer_params, weight_decay=args.wd, momentum=0.9)
         EPOCHS = 200
     else:
+        optimizer_params = [{'params': metric.parameters(), 'lr': args.lr}]
+        if any(p.requires_grad for p in net.parameters()):
+            optimizer_params.append({'params': [p for p in net.parameters() if p.requires_grad], 'lr': args.lr})
+        optimizer = optim.SGD(optimizer_params, weight_decay=args.wd, momentum=0.9)
         EPOCHS = 160
+
+    if args.scheduler_type == 'step':
+        if args.dataset in ["facescrub", "cfw", "youtube"]:
+            scheduler = adjust_lr(35, 0.5)
+        else:
+            scheduler = adjust_lr(20, 0.5)
+    else:
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
 
     since = time.time()
     best_loss = 1e3
@@ -182,7 +190,7 @@ def train(save_path, length, num, words, feature_dim):
                 best_loss = losses.avg
                 best_mAP = mAP
                 print('Saving..')
-                checkpoint_dir = '/kaggle/working/opqn-3110/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
+                checkpoint_dir = '/kaggle/working/opqn-0210/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
                 os.makedirs(checkpoint_dir, exist_ok=True)
                 torch.save({'backbone': net.state_dict(), 'mlp': metric.module.mlp}, os.path.join(checkpoint_dir, save_path))
                 best_epoch = epoch + 1
@@ -194,16 +202,6 @@ def train(save_path, length, num, words, feature_dim):
 def test(load_path, length, num, words, feature_dim):
     len_bit = int(num * math.log(words, 2))
     assert length == len_bit, "something went wrong with code length"
-
-    print(f"=============== Evaluation on model {load_path} ===============")
-    num_classes = len(trainset.classes)
-    num_classes_test = len(testset.classes)
-    print(f"Number of train identities: {num_classes}")
-    print(f"Number of test identities: {num_classes_test}")
-    print(f"Number of training images: {len(trainset)}")
-    print(f"Number of test images: {len(testset)}")
-    print(f"Number of training batches per epoch: {len(train_loader)}")
-    print(f"Number of testing batches per epoch: {len(test_loader)}")
 
     d = int(feature_dim / num)
     matrix = torch.randn(d, d)
@@ -217,6 +215,8 @@ def test(load_path, length, num, words, feature_dim):
     for i in range(1, num):
         code_books[i] = matrix @ code_books[i-1]
     code_books /= torch.norm(code_books, dim=1, keepdim=True)
+
+    print("===============evaluation on model %s===============" % load_path)
 
     if args.cross_dataset:
         if args.backbone == 'edgeface':
@@ -235,11 +235,21 @@ def test(load_path, length, num, words, feature_dim):
             else:
                 net = resnet20_pq(num_layers=20, feature_dim=feature_dim)
 
+    train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.bs, shuffle=False, num_workers=4)
+    test_loader = torch.utils.data.DataLoader(testset, batch_size=args.bs, shuffle=False, num_workers=4)
+    num_classes = len(trainset.classes)
+    num_classes_test = len(testset.classes)
+    print("number of train identities: ", num_classes)
+    print("number of test identities: ", num_classes_test)
+    print("number of training images: ", len(trainset))
+    print("number of test images: ", len(testset))
+    print("number of training batches per epoch:", len(train_loader))
+    print("number of testing batches per epoch:", len(test_loader))
+
     net = nn.DataParallel(net).to(device)
 
     checkpoint_dir = '/kaggle/working/opqn-0210/checkpoint/' if 'kaggle' in os.environ.get('PWD', '') else 'checkpoint'
-    checkpoint_path = os.path.join(checkpoint_dir, load_path)
-    checkpoint = torch.load(checkpoint_path)
+    checkpoint = torch.load(os.path.join(checkpoint_dir, load_path))
     net.load_state_dict(checkpoint['backbone'])
     mlp_weight = checkpoint['mlp']
     len_word = int(feature_dim / num)
@@ -249,9 +259,9 @@ def test(load_path, length, num, words, feature_dim):
         start = datetime.now()
         query_features, test_labels = compute_quant(transform_test, test_loader, net, device)
         if args.dataset != "vggface2":
-            mAP, top_k = PqDistRet_Ortho(query_features, test_labels, train_labels, index, mlp_weight, len_word, num, device, top=5)
+            mAP, top_k, distances, ranks, features = PqDistRet_Ortho_safe(query_features, test_labels, train_labels, index, mlp_weight, len_word, num, device, top=5, bit_length=length)
         else:
-            mAP, top_k = PqDistRet_Ortho(query_features, test_labels, train_labels, index, mlp_weight, len_word, num, device, top=10)
+            mAP, top_k, distances, ranks, features = PqDistRet_Ortho_safe(query_features, test_labels, train_labels, index, mlp_weight, len_word, num, device, top=5, bit_length=length)
 
         time_elapsed = datetime.now() - start
         print("Query completed in %d ms" % int(time_elapsed.total_seconds() * 1000))
@@ -290,15 +300,14 @@ if __name__ == "__main__":
         for i, (num_s, words_s) in enumerate(zip(args.num, args.words)):
             sys.stdout = Logger(os.path.join(save_dir,
                 str(args.len[i]) + 'bits' + '_' + args.dataset + '_' + datetime.now().strftime('%m%d%H%M') + '.txt'))
-            print("[Configuration] Training on dataset: %s\n  Len_bits: %d\n Batch_size: %d\n learning rate: %.3f\n num_books: %d\n num_words: %d"
-                  % (args.dataset, args.len[i], args.bs, args.lr, num_s, words_s))
+            print("[Configuration] Training on dataset: %s\n  Len_bits: %d\n Batch_size: %d\n learning rate: %.3f\n num_books: %d\n num_words: %d" %
+                  (args.dataset, args.len[i], args.bs, args.lr, num_s, words_s))
             print("HyperParams:\nmargin: %.3f\t miu: %.4f" % (args.margin, args.miu))
             if args.dataset != "vggface2":
                 if args.len[i] != 36:
                     feature_dim = 512
                 else:
                     feature_dim = 516
-                train(args.save[i], args.len[i], num_s, words_s, feature_dim=feature_dim)
             else:
                 feature_dim = num_s * words_s
-                train(args.save[i], args.len[i], num_s, words_s, feature_dim=feature_dim)
+            train(args.save[i], args.len[i], num_s, words_s, feature_dim=feature_dim)

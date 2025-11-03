@@ -290,6 +290,35 @@ def CosQuantNet34(num_seg, split, feature_dim):
     return ResNet_q(BasicBlock, [3, 4, 6, 3], num_seg=num_seg, split=split, feature_dim=feature_dim)
 
 
+
+import torch
+from torch import nn
+from backbones import get_model  # Từ EdgeFace repo copy vào OPQN dir
+
+class EdgeFaceBackbone(nn.Module):
+    def __init__(self, model_name='edgeface_xs_gamma_06', feature_dim=512, channel_max=512, size=4):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.backbone = get_model(model_name)
+        checkpoint_path = f'edgeface_checkpoint/{model_name}.pt'  # Path đến pretrained file
+        self.backbone.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+        # self.backbone.eval()  # Pretrained mode
+        self.backbone.train()
+
+        # BatchNorm và Dropout để match resnet20_pq
+        self.last_bn = nn.BatchNorm1d(self.feature_dim)
+        self.drop = nn.Dropout()
+
+        # Linear projection nếu feature_dim != 512 (e.g., 516 cho len=36)
+        self.proj = nn.Linear(512, feature_dim) if feature_dim != 512 else nn.Identity()
+
+    def forward(self, x):
+        features = self.backbone(x)  # [B, 512]
+        features = self.proj(features)  # Adjust feature_dim nếu cần
+        out = self.drop(features)
+        out = self.last_bn(out)
+        return out
+    
 if __name__ == '__main__':
 
     net = resnet20_pq()

@@ -63,3 +63,22 @@ class OrthoPQ(nn.Module):
         output2 *= self.s
 
         return torch.transpose(output1, 0, 1), torch.transpose(output2, 0, 1), torch.transpose(xc_softmax, 0, 1)
+
+class CosFace(nn.Module):
+    def __init__(self, in_features, out_features, s=64.0, m=0.35):
+        super(CosFace, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.s = s
+        self.m = m
+        self.weight = nn.Parameter(torch.FloatTensor(out_features, in_features))
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, input, label):
+        cosine = F.linear(F.normalize(input), F.normalize(self.weight))
+        phi = cosine - self.m
+        one_hot = torch.zeros_like(cosine).to(input.device)
+        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
+        output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
+        output *= self.s
+        return output

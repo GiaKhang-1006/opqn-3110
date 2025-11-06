@@ -4,12 +4,12 @@ from torchvision import datasets
 import torchvision.io
 import os
 import cv2
-import dlib
+#import dlib
 import numpy as np
 import torch.nn as nn
 import torchvision.transforms.functional as TF
 
-detector = dlib.get_frontal_face_detector()  # Global dlib detector for align
+#detector = dlib.get_frontal_face_detector()  # Global dlib detector for align
 
 def get_datasets_transform(dataset, data_dir="/kaggle/input/facescrub-edgeface-0710-1", cross_eval=False, backbone='resnet'):
     to_tensor = transforms.ToTensor()
